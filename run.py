@@ -1,6 +1,7 @@
 import os, hashlib, json, itertools, sys, time
 from collections import deque
-from random import randint
+import random
+
 import queue as Q
 
 '''
@@ -9,23 +10,35 @@ Basic Graph 中存储的格式示例
 graph = {
     'Alice': {
         'type': 'Girl',
-        'edges': [{
+        'outedges': [{
             'name': 'is_wife_of',
             'to': 'Bob'
         }, {
             'name': 'is_sister_of',
             'to': 'Carol'
         }]
+        'inedges': []
     },
     'Bob': {
         'type': 'Boy',
-        'edges':[]
+        'outedges':[]
+        'inedges': [{
+            'name': 'is_wife_of',
+            'from': 'Alice'
+        }, {
+            'name': 'is_mother'
+            'from': 'Carol'
+        }]
     },
     'Carol':{
         'type': 'Girl',
-        'edges': [{
+        'outedges': [{
             'name': 'is_mother',
             'to': 'Bob'
+        }]
+        'inedges': [{
+            'name': 'is_wife_of',
+            'from': 'Alice'
         }]
     }
 }
@@ -42,22 +55,22 @@ class Basic_Graph:
             type_ = item['type']
             if name not in self.graph:
                 # 每个顶点包含了 type 信息，和它的出边：一个edges数组
-                self.graph[name] = {'type': type_, 'edges': []}
+                self.graph[name] = {'type': type_, 'outedges': [], 'inedges': []}
 
         for relation in relations:
             # 添加边
             source = relation['source']
             target = relation['target']
             name = relation['type']
-            # edges 中的每一条边 edge 都包含了他的名字 和 另一个断点的名字的信息
-            self.graph[source]['edges'].append({'name': name, 'to': target})
+            self.graph[source]['outedges'].append({'name': name, 'to': target})
+            self.graph[target]['inedges'].append({'name': name, 'from': source})
     
     def __str__(self):
         # 用于最后打印结果
         string = ''
         for v, info in self.graph.items():
             string += ('%s of Type %s \n'%(v, info['type']))
-            for edge in info['edges']:
+            for edge in info['outedges']:
                 string += ('    --> %s --> %s \n'%(edge['name'], edge['to']))
             string += ('\n')
         return string
@@ -129,61 +142,73 @@ class Main_Graph(Basic_Graph):
             # lhs中没有，但是rhs中有的点，要在原图中新增
             if v not in rule.lhs.graph.keys():
                 # 生成新的点，并给他取一个不容易重复的名字
-                new_name = str(randint(0, 10000)) + v + str(randint(0, 10000))
-                self.graph[new_name] = {'type': info['type'], 'edges': []}
+                new_name = str(random.randint(0, 10000)) + v + str(random.randint(0, 10000))
+                self.graph[new_name] = {'type': info['type'], 'outedges': [], 'inedges': []}
                 match.append((new_name, v))
+                mapping[v] = new_name
                 # 不同时把边也加上去是因为边的某个顶点可能此时还没加进原图，直接加边会出错
 
         for v, info in rule.lhs.graph.items():
+            
             # 查找 lhs 中有，但是 rhs 中没有的元素（点和边）
             if v not in rule.rhs.graph.keys():
                 # 如果 lhs 中有顶点，但是 rhs中没有顶点
                 name = mapping[v]
-                # 删除该节点
+                # 先删除所有该节点出边对应的顶点那边的入边：
+                for edge in self.graph[name]['outedges']:
+                    out_v = edge['to']
+                    self.graph[out_v]['inedges'] = [in_edge for in_edge in self.graph[out_v]['inedges'] if in_edge['from'] != name]
+                # 再删除该节点
                 self.graph.pop(name)
                 continue
+            
 
-            delete_edges = []
             # 寻找要被删掉的边
-            for edge in info['edges']:
-                flag = False
-                for r_edge in rule.rhs.graph[v]['edges']:
-                    if r_edge == edge:
-                        flag = True
-                        break
-                # 在lhs中的边 如果在rhs中没找到
-                if flag is False:
+            for edge in info['outedges']:
+                if edge not in rule.rhs.graph[v]['outedges']:
+                # 在lhs中的边 如果在rhs中没有
+                    edge_name = edge['name']
                     from_name = mapping[v]
                     to_name =  mapping[edge['to']]
-                    delete_edge = {'name': edge['name'], 'to': to_name}
+                    delete_outedge = {'name': edge_name, 'to': to_name}
+                    delete_inedge = {'name': edge_name, 'from': from_name}
                     # 删掉在原图中相对应的边
-                    self.graph[from_name]['edges'].remove(delete_edge)
+                    self.graph[from_name]['outedges'].remove(delete_outedge)
+                    self.graph[to_name]['inedges'].remove(delete_inedge)
 
         for v, info in rule.rhs.graph.items():
             # 增加边
+            
             if v not in rule.lhs.graph.keys():
                 # 如果有一些点是之前新加的，把它的出边全部加上
-                for edge in info['edges']:
+                for edge in info['outedges']:
                     from_v = mapping[v]
                     to_v = mapping[edge['to']]
-                    new_edge = {'name': edge['name'], 'to': to_v}
-                    self.graph[from_v]['edges'].append(new_edge)
-                continue
+                    new_outedge = {'name': edge['name'], 'to': to_v}
+                    self.graph[from_v]['outedges'].append(new_outedge)
+                    new_inedge = {'name': edge['name'], 'from': from_v}
+                    self.graph[to_v]['inedges'].append(new_inedge)
 
-            for edge in info['edges']:
+                for edge in info['inedges']:
+                    from_v = mapping[edge['from']]
+                    to_v = mapping[v]
+                    new_outedge = {'name': edge['name'], 'to': to_v}
+                    self.graph[from_v]['outedges'].append(new_outedge)
+                    new_inedge = {'name': edge['name'], 'from': from_v}
+                    self.graph[to_v]['inedges'].append(new_inedge)
+                continue
+            
+            for edge in info['outedges']:
                 # 查找要增加的边
-                flag = False
-                for r_edge in rule.lhs.graph[v]['edges']:
-                    if r_edge == edge:
-                        flag = True
-                        break
-                # 在lhs中的边 如果在rhs中没找到
-                if flag is False:
+                if edge not in rule.lhs.graph[v]['outedges']:
+                # 在rhs中的边 如果在lhs中没找到
                     from_v = mapping[v]
                     to_v = mapping[edge['to']]
-                    new_edge = {'name': edge['name'], 'to': to_v}
+                    new_outedge = {'name': edge['name'], 'to': to_v}
+                    new_inedge = {'name': edge['name'], 'from': from_v}
                     # 在原图中添加相对应的边
-                    self.graph[from_v]['edges'].append(new_edge)
+                    self.graph[from_v]['outedges'].append(new_outedge)
+                    self.graph[to_v]['inedges'].append(new_inedge)
 
     def match_nac(self, match, nac, lhs):
         # 匹配 nac，考虑到lhs和nac中名字相同的点必须是相同的，这里把这一部分点先挑出来
@@ -212,9 +237,9 @@ class Main_Graph(Basic_Graph):
                 mapping[pair[1]] = pair[0]
             # 检查模板中的每一条边在原图中是否存在
             for pv, pinfo in pattern_graph.items():
-                for edge in pinfo['edges']:
+                for edge in pinfo['outedges']:
                     mapping_edge = {'name': edge['name'], 'to': mapping[edge['to']]}
-                    if mapping_edge not in graph[mapping[pv]]['edges']:
+                    if mapping_edge not in graph[mapping[pv]]['outedges']:
                         return True
             # 未发现冲突
             return False
@@ -224,20 +249,34 @@ class Main_Graph(Basic_Graph):
         for pattern_v, pattern_info in pattern_graph.items():
             for v, info in graph.items():
                 # 可能的映射: 
-                # 必要条件1: 类型相同 and 必要条件2: 原图的出度>= pattern中的出度 
-                if info['type'] == pattern_info['type'] and len(info['edges']) >= len(pattern_info['edges']):
-                    # 必要条件3: pattern中每一个relation的名字都必须被包含
-                    relation_names = [ e['name'] for e in info['edges']]
-                    flag = True
-                    for edge in pattern_info['edges']:
-                        if edge['name'] in relation_names:
-                            relation_names.remove(edge['name'] )
-                        else:
-                            flag = False
-                            break
-                    # v --> pattern_v 是一个可能的映射
-                    if flag is True:
-                        waiting_list.add((v,pattern_v))
+                # 必要条件1: 类型相同 and 必要条件2: 原图的度>= pattern中的度
+                try: 
+                    if info['type'] == pattern_info['type'] and len(info['outedges']) >= len(pattern_info['outedges']) and len(info['inedges']) >= len(pattern_info['inedges']):
+                        # 必要条件3: pattern中每一个relation的名字都必须被包含
+                        
+                        relation_names = [ e['name'] for e in info['outedges']]
+                        flag = True
+                        for edge in pattern_info['outedges']:
+                            if edge['name'] in relation_names:
+                                relation_names.remove(edge['name'] )
+                            else:
+                                flag = False
+                                break
+                        # v --> pattern_v 是一个可能的映射
+                        if flag is True:
+                            relation_names = [ e['name'] for e in info['inedges']]
+                            for edge in pattern_info['inedges']:
+                                if edge['name'] in relation_names:
+                                    relation_names.remove(edge['name'])
+                                else:
+                                    flag = False
+                                    break
+                            if flag is True:    
+                                waiting_list.add((v,pattern_v))
+                        
+                except:
+                    print(graph, pattern_graph)
+                    exit()
         
         r = len(pattern_graph) # 模板的点的数目
 
@@ -268,19 +307,22 @@ class Main_Graph(Basic_Graph):
     # 递归会爆栈 用循环
     def dfs(self):
         stack = [self.graph]
+        if self.match_goal(self.goal):
+            return True
+
         while stack:
             prev_graph = stack.pop()
             # 判断是否之前遍历过这个状态
             prev_hash = self.hash_(prev_graph) 
             if prev_hash not in self.visited:
                 self.visited.add(prev_hash)
+                self.comp_time += 1
                 self.graph = self.deepcopy_dict(prev_graph)
                 # 应用rules，得到遍历的子节点，将其入栈
                 for rule in self.rules:
                     matches = self.match_rule(rule)
                     for match in matches:
                         self.apply_rule(rule, match)
-                        self.comp_time += 1
                         if self.match_goal(self.goal):
                             return True
                         stack.append(self.graph)
@@ -288,51 +330,54 @@ class Main_Graph(Basic_Graph):
         return False
  
     def bfs(self):
+        
+        success = self.match_goal(self.goal)
+        if success:
+            return True
         que = deque([self.graph])
         while que:
-            prev_graph = que.popleft()
-            # 判断是否之前遍历过这个状态
-            prev_hash = self.hash_(prev_graph) 
-            if prev_hash not in self.visited:
-                self.visited.add(prev_hash)
-                self.graph = self.deepcopy_dict(prev_graph)
-                # 应用rules，得到遍历的子节点，将其入栈
-                for rule in self.rules:
-                    matches = self.match_rule(rule)
-                    for match in matches:
-                        self.apply_rule(rule, match)
-                        self.comp_time += 1
-                        if self.match_goal(self.goal):
-                            return True
-                        que.append(self.graph)
-                        self.graph = self.deepcopy_dict(prev_graph)
+            prev = que.popleft()
+            prev_graph = prev
+            self.comp_time += 1
+            self.graph = self.deepcopy_dict(prev_graph)
+            # 应用rules，得到遍历的子节点，判断在之前有没有遍历，如果没有将其入队列
+            #roadsum指的是从begin state到current state需要的最少操作次数，由于所有结点加入队列时必定是第一次出现，因此将其可以将其父节点roadsum + 1表示此节点的roadsum
+            for rule in self.rules:
+                matches = self.match_rule(rule)
+                for match in matches:
+                    self.apply_rule(rule, match)
+                    success = self.match_goal(self.goal)
+                    if success:
+                        return True
+                    else :
+                        # 判断是否之前遍历过这个状态
+                        son_hash = self.hash_(self.graph)
+                        if son_hash not in self.visited:
+                            self.visited.add(son_hash)
+                            que.append(self.graph)
+                    self.graph = self.deepcopy_dict(prev_graph)
         return False
 
     ############################ 以下是一些辅助函数
     def hash_(self, a):
         # get a unique id for a dictionary
         return(hashlib.sha1(json.dumps(a, sort_keys=True).encode('utf-8')).hexdigest())
-    def get_subgraph(self, graph, vs):
-        # 求 graph 限制在 vs 顶点集中的子图
-        subgraph = {}
-        for v, info in graph.items():
-            if v in vs:
-                subgraph[v] = {'type': info['type'], 'edges': []}
-
-                for edge in info['edges']:
-                    if edge['to'] in vs:
-                        subgraph[v]['edges'].append(edge)
-        return subgraph
 
     def deepcopy_dict(self, dic):
         # 深拷贝
         # python 自带的深拷贝函数太慢了，不如自己遍历一遍
+
         new_dict = {}
         for v, info in dic.items():
-            edges = []
-            for edge in info['edges']:
-                edges.append({'name': edge['name'], 'to': edge['to']})
-            new_dict[v] = {'type': info['type'], 'edges': edges}
+            out_edges = []
+            in_edges = []
+
+            for edge in info['outedges']:
+                out_edges.append({'name': edge['name'], 'to': edge['to']})
+
+            for edge in info['inedges']:
+                in_edges.append({'name': edge['name'], 'from': edge['from']})
+            new_dict[v] = {'type': info['type'], 'outedges': out_edges, 'inedges': in_edges}
         return new_dict
 
 if __name__ == '__main__':
@@ -355,7 +400,7 @@ if __name__ == '__main__':
     graph = Main_Graph(graph['objects'], graph.get('relations', []), goal, rules)
     start_time = time.time()
 
-    if graph.bfs():
+    if graph.dfs():
         print("--- %s seconds ---" % (time.time() - start_time))
         print('success\n')#final state:\n', graph)
     else:
